@@ -92,7 +92,20 @@ find_package(Threads REQUIRED)
 find_package(JsonCpp)
 
 ### All options defined here
-option(BUILD_LOADER "Build loader" ON)
+# Oculus OpenXR modification begins
+# option(BUILD_LOADER "Build loader" ON)
+option(BUILD_LOADER "Build loader" OFF)
+add_library(openxr_loader SHARED IMPORTED)
+set_property(
+    TARGET
+    openxr_loader
+    PROPERTY
+    IMPORTED_LOCATION
+    /home/wanhang/AndroidStudioProjects/ovr_openxr_mobile_sdk_42.0/OpenXR/Libs/Android/${ANDROID_ABI}/${CMAKE_BUILD_TYPE}/libopenxr_loader.so
+)
+
+# Oculus modification end
+
 option(BUILD_ALL_EXTENSIONS "Build loader and layers with all extensions" OFF)
 option(
     BUILD_LOADER_WITH_EXCEPTION_HANDLING

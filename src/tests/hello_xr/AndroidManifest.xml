@@ -19,6 +19,9 @@
     android:name="android.hardware.vr.headtracking"
     android:required="false"
     android:version="1" />
+  <uses-feature
+      android:name="com.oculus.feature.PASSTHROUGH"
+      android:required="true" />
 
   <!-- If building externally with the OpenXR AAR, this would be merged in automatically. -->
   <uses-permission android:name="org.khronos.openxr.permission.OPENXR" />
@@ -54,6 +57,7 @@
       <intent-filter>
         <action android:name="android.intent.action.MAIN" />
         <category android:name="android.intent.category.LAUNCHER" />
+        <category android:name="com.oculus.intent.category.VR" />
         <category android:name="org.khronos.openxr.intent.category.IMMERSIVE_HMD" />
       </intent-filter>
     </activity>

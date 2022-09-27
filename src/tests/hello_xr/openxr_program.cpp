@@ -59,17 +59,29 @@ XrPosef RotateCCWAboutYAxis(float radians, XrVector3f translation) {
 inline XrReferenceSpaceCreateInfo GetXrReferenceSpaceCreateInfo(const std::string& referenceSpaceTypeStr) {
     XrReferenceSpaceCreateInfo referenceSpaceCreateInfo{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};
     referenceSpaceCreateInfo.poseInReferenceSpace = Math::Pose::Identity();
+    
     if (EqualsIgnoreCase(referenceSpaceTypeStr, "View")) {
+        // centroid of view origins, track the view origin
         referenceSpaceCreateInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_VIEW;
     } else if (EqualsIgnoreCase(referenceSpaceTypeStr, "ViewFront")) {
         // Render head-locked 2m in front of device.
         referenceSpaceCreateInfo.poseInReferenceSpace = Math::Pose::Translation({0.f, 0.f, -2.f}),
         referenceSpaceCreateInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_VIEW;
+        // with +Y up, +X to the right, -Z forward
+        // that means points to the forward directings
+        // not incorporating user's eye orientations, is not gravity aligned.
     } else if (EqualsIgnoreCase(referenceSpaceTypeStr, "Local")) {
+        // this means we create a word-locked origin, and is gravity-aligned
+        // locks in both the initial position and orientation 
         referenceSpaceCreateInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_LOCAL;
     } else if (EqualsIgnoreCase(referenceSpaceTypeStr, "Stage")) {
+        // a runtime-defined flat rectangular space that is empty
+        // and can be walked around on
         referenceSpaceCreateInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_STAGE;
+        // then it focus on different stage and positions for change directions and views
+        // all positions are rotated around the Y axis
     } else if (EqualsIgnoreCase(referenceSpaceTypeStr, "StageLeft")) {
+        // each pose consists of a Quaternion (for orientation) and a vertor (for position)
         referenceSpaceCreateInfo.poseInReferenceSpace = Math::Pose::RotateCCWAboutYAxis(0.f, {-2.f, 0.f, -2.f});
         referenceSpaceCreateInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_STAGE;
     } else if (EqualsIgnoreCase(referenceSpaceTypeStr, "StageRight")) {
@@ -206,11 +218,56 @@ struct OpenXrProgram : IOpenXrProgram {
 
         CHECK_XRCMD(xrCreateInstance(&createInfo, &m_instance));
     }
+    
+    bool SystemSupportsPassthrough(XrFormFactor formFactor){
+        XrSystemPassthroughPropertiesFB passthroughSysProperties{XR_TYPE_SYSTEM_PASSTHROUGH_PROPERTIES_FB};
+        XrSystemProperties sysProperties{XR_TYPE_SYSTEM_PROPERTIES, &passthroughSysProperties};
+        
+        XrSystemGetInfo systemGetInfo{XR_TYPE_SYSTEM_GET_INFO};
+        systemGetInfo.formFactor = formFactor;
+        
+        XrSystemId systemId = XR_NULL_SYSTEM_ID;
+        xrGetSystem(m_instance, &systemGetInfo, &systemId);
+        xrGetSystemProperties(m_instance, systemId, &sysProperties);
+        
+        return passthroughSysProperties.supportsPassthrough != XR_FALSE;
+    }
+    
+    /* additional create information added to enable oculus quest2 passthrough mode*/
+    void CreateInstancePassThrough(){
+        CHECK(m_instance == XR_NULL_HANDLE);
+        // create union of extensions required by platform(Android) and graphics plugins (OpenGL ES)
+        std::vector<const char*> extensions;
+        // transform platform and graphics extension std::strings to C strings
+        const std::vector<std::string> platformExtensions = m_platformPlugin->GetInstanceExtensions();
+        std::transform(platformExtensions.begin(), platformExtensions.end(), std::back_inserter(extensions),
+                       [](const std::string& ext) { return ext.c_str(); });
+        const std::vector<std::string> graphicsExtensions = m_graphicsPlugin->GetInstanceExtensions();
+        std::transform(graphicsExtensions.begin(), graphicsExtensions.end(), std::back_inserter(extensions),
+                       [](const std::string& ext) { return ext.c_str(); });
+        // generate instance create information
+        XrInstanceCreateInfo createInfo{};
+        createInfo.type = XR_TYPE_INSTANCE_CREATE_INFO;
+        createInfo.next = m_platformPlugin->GetInstanceCreateExtension();
+        
+        // add FB extensions to the current extension list
+        
+        extensions.push_back(XR_FB_PASSTHROUGH_EXTENSION_NAME);
+        createInfo.enabledExtensionCount = (uint32_t)extensions.size();
+        createInfo.enabledExtensionNames = extensions.data();
+
+        strcpy(createInfo.applicationInfo.applicationName, "HelloXR_PASSTHROUGH");
+        createInfo.applicationInfo.apiVersion = XR_CURRENT_API_VERSION;
+
+        CHECK_XRCMD(xrCreateInstance(&createInfo, &m_instance));
+        // check whether the system 
+    }
 
     void CreateInstance() override {
         LogLayersAndExtensions();
 
-        CreateInstanceInternal();
+        //CreateInstanceInternal();
+        CreateInstancePassThrough();
 
         LogInstanceInfo();
     }
@@ -311,11 +368,16 @@ struct OpenXrProgram : IOpenXrProgram {
                    Fmt("Using system %d for form factor %s", m_systemId, to_string(m_options->Parsed.FormFactor)));
         CHECK(m_instance != XR_NULL_HANDLE);
         CHECK(m_systemId != XR_NULL_SYSTEM_ID);
+        
+        /*additional information for checking whether system supports Passthrough*/
+        bool support_passthrough = SystemSupportsPassthrough(systemInfo.formFactor);
+        Log::Write(Log::Level::Info, 
+                   Fmt("Current system support passthrough: %d", support_passthrough));
     }
 
     void InitializeDevice() override {
         LogViewConfigurations();
-
+        
         // The graphics API can initialize the graphics device now that the systemId and instance
         // handle are available.
         m_graphicsPlugin->InitializeDevice(m_instance, m_systemId);
@@ -335,12 +397,16 @@ struct OpenXrProgram : IOpenXrProgram {
         }
     }
 
+    // this indicate the input state from the 
+    // controller
     struct InputState {
         XrActionSet actionSet{XR_NULL_HANDLE};
         XrAction grabAction{XR_NULL_HANDLE};
         XrAction poseAction{XR_NULL_HANDLE};
         XrAction vibrateAction{XR_NULL_HANDLE};
         XrAction quitAction{XR_NULL_HANDLE};
+        // record the status of each hande
+        // XrPath connects an application with a single path, which is in the context of a single instance
         std::array<XrPath, Side::COUNT> handSubactionPath;
         std::array<XrSpace, Side::COUNT> handSpace;
         std::array<float, Side::COUNT> handScale = {{1.0f, 1.0f}};
@@ -362,6 +428,8 @@ struct OpenXrProgram : IOpenXrProgram {
         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right", &m_input.handSubactionPath[Side::RIGHT]));
 
         // Create actions.
+        // corresponding to the actions defined in struct InputState
+        // grab, pose, vibrate, quit
         {
             // Create an input action for grabbing objects with the left and right hands.
             XrActionCreateInfo actionInfo{XR_TYPE_ACTION_CREATE_INFO};
@@ -451,6 +519,11 @@ struct OpenXrProgram : IOpenXrProgram {
             XrPath oculusTouchInteractionProfilePath;
             CHECK_XRCMD(
                 xrStringToPath(m_instance, "/interaction_profiles/oculus/touch_controller", &oculusTouchInteractionProfilePath));
+            // for the oculus, the sequeeze is equal to the grab action
+            // so by doing a squeeze, what one can do is to do a squeeze, that means, make the data smaller
+            // then check for the vibrate action
+            // at grab time, it will also create vibration, so they are mapped to the same?
+            // TODO: check for that 
             std::vector<XrActionSuggestedBinding> bindings{{{m_input.grabAction, squeezeValuePath[Side::LEFT]},
                                                             {m_input.grabAction, squeezeValuePath[Side::RIGHT]},
                                                             {m_input.poseAction, posePath[Side::LEFT]},
@@ -485,6 +558,7 @@ struct OpenXrProgram : IOpenXrProgram {
         }
 
         // Suggest bindings for the Valve Index Controller.
+        // squeeze force path is only used here
         {
             XrPath indexControllerInteractionProfilePath;
             CHECK_XRCMD(
@@ -505,6 +579,7 @@ struct OpenXrProgram : IOpenXrProgram {
         }
 
         // Suggest bindings for the Microsoft Mixed Reality Motion Controller.
+        // squeeze click path is only used here
         {
             XrPath microsoftMixedRealityInteractionProfilePath;
             CHECK_XRCMD(xrStringToPath(m_instance, "/interaction_profiles/microsoft/motion_controller",
@@ -705,6 +780,7 @@ struct OpenXrProgram : IOpenXrProgram {
         *exitRenderLoop = *requestRestart = false;
 
         // Process all pending messages.
+        // this is a busy waiting for the input dataset
         while (const XrEventDataBaseHeader* event = TryReadNextEvent()) {
             switch (event->type) {
                 case XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING: {
@@ -715,6 +791,7 @@ struct OpenXrProgram : IOpenXrProgram {
                     return;
                 }
                 case XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED: {
+                    // session has several different states, if one event changes, use this branch to do a special handle of it
                     auto sessionStateChangedEvent = *reinterpret_cast<const XrEventDataSessionStateChanged*>(event);
                     HandleSessionStateChangedEvent(sessionStateChangedEvent, exitRenderLoop, requestRestart);
                     break;
@@ -758,6 +835,7 @@ struct OpenXrProgram : IOpenXrProgram {
             }
             case XR_SESSION_STATE_STOPPING: {
                 CHECK(m_session != XR_NULL_HANDLE);
+                // here if it is stopped, then 
                 m_sessionRunning = false;
                 CHECK_XRCMD(xrEndSession(m_session))
                 break;
@@ -882,15 +960,71 @@ struct OpenXrProgram : IOpenXrProgram {
         std::vector<XrCompositionLayerBaseHeader*> layers;
         XrCompositionLayerProjection layer{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
         std::vector<XrCompositionLayerProjectionView> projectionLayerViews;
+        //this means that we need to render the frame
+        // only one layer here?
         if (frameState.shouldRender == XR_TRUE) {
+            // call renderLayer to help project into a layer
             if (RenderLayer(frameState.predictedDisplayTime, projectionLayerViews, layer)) {
                 layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader*>(&layer));
             }
         }
+        /* create a passthrough layer*/
+        /**add and create the passthrough feature and passthrough layer**/
+        // create a passthrough feature
+        PFN_xrCreatePassthroughFB pfnXrCreatePassthroughFBX = nullptr;
+        XrResult result = xrGetInstanceProcAddr(
+                m_instance, "xrCreatePassthroughFB",
+                (PFN_xrVoidFunction *)(&pfnXrCreatePassthroughFBX));
+        if (XR_FAILED(result)){
+            Log::Write(Log::Level::Info, Fmt("Falled to load the function pointer"));
+        }
+        XrPassthroughFB passthroughFeature= XR_NULL_HANDLE;
+        XrPassthroughCreateInfoFB passthroughCreateInfo;
+        passthroughCreateInfo.type = XR_TYPE_PASSTHROUGH_CREATE_INFO_FB;
+        passthroughCreateInfo.next = NULL;
+        passthroughCreateInfo.flags = XR_PASSTHROUGH_IS_RUNNING_AT_CREATION_BIT_FB;
+
+        result = pfnXrCreatePassthroughFBX(m_session, &passthroughCreateInfo, &passthroughFeature);
+        if (XR_FAILED(result)) {
+            Log::Write(Log::Level::Info, Fmt("Cannot create a new passthrough feature"));
+        }
+        // load the passthrough layer creation function
+        PFN_xrCreatePassthroughLayerFB  pfnXrCreatePassthroughLayerFb = nullptr;
+        xrGetInstanceProcAddr(
+                m_instance, "xrCreatePassthroughLayerFB",
+                (PFN_xrVoidFunction *)(&pfnXrCreatePassthroughLayerFb));
+        // Create and run passthrough layer
+        XrPassthroughLayerFB passthroughLayer = XR_NULL_HANDLE;
+        
+        
+
+        XrPassthroughLayerCreateInfoFB layerCreateInfo;
+        layerCreateInfo.type = XR_TYPE_PASSTHROUGH_LAYER_CREATE_INFO_FB;
+        layerCreateInfo.next = nullptr;
+        layerCreateInfo.passthrough = passthroughFeature;
+        layerCreateInfo.purpose = XR_PASSTHROUGH_LAYER_PURPOSE_RECONSTRUCTION_FB;
+        layerCreateInfo.flags = XR_PASSTHROUGH_IS_RUNNING_AT_CREATION_BIT_FB;
+
+        result = pfnXrCreatePassthroughLayerFb(m_session, &layerCreateInfo, &passthroughLayer);
+        if (XR_FAILED(result)) {
+            Log::Write(Log::Level::Info, Fmt("Failed to create and start a passthrough layer"));
+        }else{
+            Log::Write(Log::Level::Info, Fmt("Successfully created a passthrough layer"));
+        }
+        /*add for passthrough*/
+        XrCompositionLayerPassthroughFB passthroughCompLayer;
+        passthroughCompLayer.type = XR_TYPE_COMPOSITION_LAYER_PASSTHROUGH_FB;
+        passthroughCompLayer.next = nullptr;
+        passthroughCompLayer.layerHandle = passthroughLayer; 
+        passthroughCompLayer.flags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+        passthroughCompLayer.space = XR_NULL_HANDLE;
+        layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader*>(&passthroughCompLayer));
+        
 
         XrFrameEndInfo frameEndInfo{XR_TYPE_FRAME_END_INFO};
         frameEndInfo.displayTime = frameState.predictedDisplayTime;
-        frameEndInfo.environmentBlendMode = m_options->Parsed.EnvironmentBlendMode;
+//        frameEndInfo.environmentBlendMode = m_options->Parsed.EnvironmentBlendMode;
+        frameEndInfo.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
         frameEndInfo.layerCount = (uint32_t)layers.size();
         frameEndInfo.layers = layers.data();
         CHECK_XRCMD(xrEndFrame(m_session, &frameEndInfo));
@@ -948,6 +1082,9 @@ struct OpenXrProgram : IOpenXrProgram {
             if (XR_UNQUALIFIED_SUCCESS(res)) {
                 if ((spaceLocation.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0 &&
                     (spaceLocation.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0) {
+                    // this is for the hand scale of the input dataset
+                    // that means if a grabAction is detected for the hand
+                    // then 
                     float scale = 0.1f * m_input.handScale[hand];
                     cubes.push_back(Cube{spaceLocation.pose, {scale, scale, scale}});
                 }
@@ -984,6 +1121,7 @@ struct OpenXrProgram : IOpenXrProgram {
             projectionLayerViews[i].subImage.imageRect.extent = {viewSwapchain.width, viewSwapchain.height};
 
             const XrSwapchainImageBaseHeader* const swapchainImage = m_swapchainImages[viewSwapchain.handle][swapchainImageIndex];
+            // use the graphic plugin to render images, no matter what will happen here 
             m_graphicsPlugin->RenderView(projectionLayerViews[i], swapchainImage, m_colorSwapchainFormat, cubes);
 
             XrSwapchainImageReleaseInfo releaseInfo{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
