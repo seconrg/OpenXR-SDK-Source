@@ -84,7 +84,9 @@ struct Options {
 
         switch (Parsed.EnvironmentBlendMode) {
             case XR_ENVIRONMENT_BLEND_MODE_OPAQUE:
-                return SlateGrey;
+                return TransparentBlack;
+                // change it to TransparentBlack to Enable Oculus passthrough
+//                return SlateGrey;
             case XR_ENVIRONMENT_BLEND_MODE_ADDITIVE:
                 return Black;
             case XR_ENVIRONMENT_BLEND_MODE_ALPHA_BLEND:
