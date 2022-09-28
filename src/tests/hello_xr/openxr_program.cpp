@@ -652,6 +652,47 @@ struct OpenXrProgram : IOpenXrProgram {
             XrReferenceSpaceCreateInfo referenceSpaceCreateInfo = GetXrReferenceSpaceCreateInfo(m_options->AppSpace);
             CHECK_XRCMD(xrCreateReferenceSpace(m_session, &referenceSpaceCreateInfo, &m_appSpace));
         }
+        /*
+         * additional information for building passthrough feature 
+         * */
+        // create a passthrough feature
+        PFN_xrCreatePassthroughFB pfnXrCreatePassthroughFBX = nullptr;
+        XrResult result = xrGetInstanceProcAddr(
+                m_instance, "xrCreatePassthroughFB",
+                (PFN_xrVoidFunction *)(&pfnXrCreatePassthroughFBX));
+        if (XR_FAILED(result)){
+            Log::Write(Log::Level::Info, Fmt("Falled to load the function pointer"));
+        }
+        m_passthroughFeature= XR_NULL_HANDLE;
+        XrPassthroughCreateInfoFB passthroughCreateInfo;
+        passthroughCreateInfo.type = XR_TYPE_PASSTHROUGH_CREATE_INFO_FB;
+        passthroughCreateInfo.next = nullptr;
+        passthroughCreateInfo.flags = XR_PASSTHROUGH_IS_RUNNING_AT_CREATION_BIT_FB;
+
+        result = pfnXrCreatePassthroughFBX(m_session, &passthroughCreateInfo, &m_passthroughFeature);
+        if (XR_FAILED(result)) {
+            Log::Write(Log::Level::Info, Fmt("Cannot create a new passthrough feature"));
+        }
+        // load the passthrough layer creation function
+        PFN_xrCreatePassthroughLayerFB  pfnXrCreatePassthroughLayerFb = nullptr;
+        xrGetInstanceProcAddr(
+                m_instance, "xrCreatePassthroughLayerFB",
+                (PFN_xrVoidFunction *)(&pfnXrCreatePassthroughLayerFb));
+        // Create and run passthrough layer
+        m_passthroughLayer = XR_NULL_HANDLE;
+        XrPassthroughLayerCreateInfoFB layerCreateInfo;
+        layerCreateInfo.type = XR_TYPE_PASSTHROUGH_LAYER_CREATE_INFO_FB;
+        layerCreateInfo.next = nullptr;
+        layerCreateInfo.passthrough = m_passthroughFeature;
+        layerCreateInfo.purpose = XR_PASSTHROUGH_LAYER_PURPOSE_RECONSTRUCTION_FB;
+        layerCreateInfo.flags = XR_PASSTHROUGH_IS_RUNNING_AT_CREATION_BIT_FB;
+
+        result = pfnXrCreatePassthroughLayerFb(m_session, &layerCreateInfo, &m_passthroughLayer);
+        if (XR_FAILED(result)) {
+            Log::Write(Log::Level::Info, Fmt("Failed to create and start a passthrough layer"));
+        }else{
+            Log::Write(Log::Level::Info, Fmt("Successfully created a passthrough layer"));
+        }
     }
 
     void CreateSwapchains() override {
@@ -960,6 +1001,19 @@ struct OpenXrProgram : IOpenXrProgram {
         std::vector<XrCompositionLayerBaseHeader*> layers;
         XrCompositionLayerProjection layer{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
         std::vector<XrCompositionLayerProjectionView> projectionLayerViews;
+        
+        
+        
+        /*add for passthrough*/
+        XrCompositionLayerPassthroughFB passthroughCompLayer;
+        passthroughCompLayer.type = XR_TYPE_COMPOSITION_LAYER_PASSTHROUGH_FB;
+        passthroughCompLayer.next = nullptr;
+        passthroughCompLayer.layerHandle = m_passthroughLayer; 
+        passthroughCompLayer.flags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+        passthroughCompLayer.space = XR_NULL_HANDLE;
+        layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader*>(&passthroughCompLayer));
+
+
         //this means that we need to render the frame
         // only one layer here?
         if (frameState.shouldRender == XR_TRUE) {
@@ -968,57 +1022,6 @@ struct OpenXrProgram : IOpenXrProgram {
                 layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader*>(&layer));
             }
         }
-        /* create a passthrough layer*/
-        /**add and create the passthrough feature and passthrough layer**/
-        // create a passthrough feature
-        PFN_xrCreatePassthroughFB pfnXrCreatePassthroughFBX = nullptr;
-        XrResult result = xrGetInstanceProcAddr(
-                m_instance, "xrCreatePassthroughFB",
-                (PFN_xrVoidFunction *)(&pfnXrCreatePassthroughFBX));
-        if (XR_FAILED(result)){
-            Log::Write(Log::Level::Info, Fmt("Falled to load the function pointer"));
-        }
-        XrPassthroughFB passthroughFeature= XR_NULL_HANDLE;
-        XrPassthroughCreateInfoFB passthroughCreateInfo;
-        passthroughCreateInfo.type = XR_TYPE_PASSTHROUGH_CREATE_INFO_FB;
-        passthroughCreateInfo.next = NULL;
-        passthroughCreateInfo.flags = XR_PASSTHROUGH_IS_RUNNING_AT_CREATION_BIT_FB;
-
-        result = pfnXrCreatePassthroughFBX(m_session, &passthroughCreateInfo, &passthroughFeature);
-        if (XR_FAILED(result)) {
-            Log::Write(Log::Level::Info, Fmt("Cannot create a new passthrough feature"));
-        }
-        // load the passthrough layer creation function
-        PFN_xrCreatePassthroughLayerFB  pfnXrCreatePassthroughLayerFb = nullptr;
-        xrGetInstanceProcAddr(
-                m_instance, "xrCreatePassthroughLayerFB",
-                (PFN_xrVoidFunction *)(&pfnXrCreatePassthroughLayerFb));
-        // Create and run passthrough layer
-        XrPassthroughLayerFB passthroughLayer = XR_NULL_HANDLE;
-        
-        
-
-        XrPassthroughLayerCreateInfoFB layerCreateInfo;
-        layerCreateInfo.type = XR_TYPE_PASSTHROUGH_LAYER_CREATE_INFO_FB;
-        layerCreateInfo.next = nullptr;
-        layerCreateInfo.passthrough = passthroughFeature;
-        layerCreateInfo.purpose = XR_PASSTHROUGH_LAYER_PURPOSE_RECONSTRUCTION_FB;
-        layerCreateInfo.flags = XR_PASSTHROUGH_IS_RUNNING_AT_CREATION_BIT_FB;
-
-        result = pfnXrCreatePassthroughLayerFb(m_session, &layerCreateInfo, &passthroughLayer);
-        if (XR_FAILED(result)) {
-            Log::Write(Log::Level::Info, Fmt("Failed to create and start a passthrough layer"));
-        }else{
-            Log::Write(Log::Level::Info, Fmt("Successfully created a passthrough layer"));
-        }
-        /*add for passthrough*/
-        XrCompositionLayerPassthroughFB passthroughCompLayer;
-        passthroughCompLayer.type = XR_TYPE_COMPOSITION_LAYER_PASSTHROUGH_FB;
-        passthroughCompLayer.next = nullptr;
-        passthroughCompLayer.layerHandle = passthroughLayer; 
-        passthroughCompLayer.flags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
-        passthroughCompLayer.space = XR_NULL_HANDLE;
-        layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader*>(&passthroughCompLayer));
         
 
         XrFrameEndInfo frameEndInfo{XR_TYPE_FRAME_END_INFO};
@@ -1121,7 +1124,7 @@ struct OpenXrProgram : IOpenXrProgram {
             projectionLayerViews[i].subImage.imageRect.extent = {viewSwapchain.width, viewSwapchain.height};
 
             const XrSwapchainImageBaseHeader* const swapchainImage = m_swapchainImages[viewSwapchain.handle][swapchainImageIndex];
-            // use the graphic plugin to render images, no matter what will happen here 
+            // use the graphic plugin to render images, 
             m_graphicsPlugin->RenderView(projectionLayerViews[i], swapchainImage, m_colorSwapchainFormat, cubes);
 
             XrSwapchainImageReleaseInfo releaseInfo{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
@@ -1129,10 +1132,11 @@ struct OpenXrProgram : IOpenXrProgram {
         }
 
         layer.space = m_appSpace;
-        layer.layerFlags =
-            m_options->Parsed.EnvironmentBlendMode == XR_ENVIRONMENT_BLEND_MODE_ALPHA_BLEND
-                ? XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT | XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT
-                : 0;
+//        layer.layerFlags =
+//            m_options->Parsed.EnvironmentBlendMode == XR_ENVIRONMENT_BLEND_MODE_ALPHA_BLEND
+//                ? XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT | XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT
+//                : 0;
+        layer.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
         layer.viewCount = (uint32_t)projectionLayerViews.size();
         layer.views = projectionLayerViews.data();
         return true;
@@ -1163,6 +1167,10 @@ struct OpenXrProgram : IOpenXrProgram {
     InputState m_input;
 
     const std::set<XrEnvironmentBlendMode> m_acceptableBlendModes;
+    
+    // additional info for building Passthrough model
+    XrPassthroughFB m_passthroughFeature;
+    XrPassthroughLayerFB m_passthroughLayer;
 };
 }  // namespace
 
