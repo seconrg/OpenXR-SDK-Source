@@ -100,8 +100,8 @@ set_property(
     TARGET
     openxr_loader
     PROPERTY
-    IMPORTED_LOCATION
-    /home/wanhang/AndroidStudioProjects/ovr_openxr_mobile_sdk_42.0/OpenXR/Libs/Android/${ANDROID_ABI}/${CMAKE_BUILD_TYPE}/libopenxr_loader.so
+    IMPORTED_LOCATION 
+    D:/Documents/Oculus_OpenXR/ovr_openxr_mobile_sdk_42.0/OpenXR/Libs/Android/${ANDROID_ABI}/${CMAKE_BUILD_TYPE}/libopenxr_loader.so
 )
 
 # Oculus modification end
